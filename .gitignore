@@ -1,0 +1,12 @@
+.venv/
+
+data/
+
+MAMA-MIA-data/
+
+*.pth
+*.h5
+
+__pycache__/
+*.log
+.DS_Store
