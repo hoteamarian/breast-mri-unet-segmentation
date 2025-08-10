@@ -26,7 +26,7 @@ def build_dataframe(h5_path):
     """
     records = []
     with h5py.File(h5_path, "r") as h5f:
-        masks = h5f["masks"]         # shape: (N, 1, H, W)
+        masks = h5f["masks"]  # shape: (N, 1, H, W)
         N = masks.shape[0]
         flat = masks[:, 0, :, :].reshape(N, -1)
         slice_sums = flat.sum(axis=1)
@@ -41,6 +41,7 @@ class HDF5SliceDataset(Dataset):
     PyTorch Dataset for HDF5-backed 2D slices.
     Returns (img_tensor, mask_tensor, label).
     """
+
     def __init__(self, h5_path, df):
         self.h5_path = h5_path
         self.df = df.reset_index(drop=True)
@@ -55,8 +56,8 @@ class HDF5SliceDataset(Dataset):
         row = self.df.iloc[idx]
         sidx = int(row["slice_idx"])
         label = int(row["label"])
-        img_np = self._h5f["images"][sidx]      # (C,H,W)
-        mask_np = self._h5f["masks"][sidx, 0]   # (H,W)
+        img_np = self._h5f["images"][sidx]  # (C,H,W)
+        mask_np = self._h5f["masks"][sidx, 0]  # (H,W)
         img = torch.from_numpy(img_np).float()
         mask = torch.from_numpy(mask_np).unsqueeze(0).float()
         return img, mask, label
@@ -70,7 +71,7 @@ def main():
 
     # Build DataFrame
     df = build_dataframe(str(h5_path))
-    print(f"Total slices: {len(df)}, Pos: {df['label'].sum()}, Neg: {len(df)-df['label'].sum()}")
+    print(f"Total slices: {len(df)}, Pos: {df['label'].sum()}, Neg: {len(df) - df['label'].sum()}")
 
     # Train/Val/Test split
     train_df, temp_df = train_test_split(
@@ -82,9 +83,14 @@ def main():
     print(f"Splits: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
 
     # Datasets & Loaders
-    batch_size = 32  # increased for efficiency
-    ds_kwargs = dict(batch_size=batch_size, pin_memory=True,
-                     num_workers=8, persistent_workers=True, prefetch_factor=4)
+    batch_size = 32
+    ds_kwargs = dict(
+        batch_size=batch_size,
+        pin_memory=True,
+        num_workers=8,
+        persistent_workers=True,
+        prefetch_factor=4
+    )
     train_loader = DataLoader(
         HDF5SliceDataset(str(h5_path), train_df), shuffle=True, **ds_kwargs
     )
@@ -95,66 +101,60 @@ def main():
         HDF5SliceDataset(str(h5_path), test_df), shuffle=False, **ds_kwargs
     )
 
-    # Device, model, optimizer, loss, scaler
+    # Device, model, optimizer, mixed-precision scaler
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
     model = Unet(input_channel=6).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-6)
-    scaler = GradScaler()
+
+    from torch.optim.lr_scheduler import ReduceLROnPlateau
+    scheduler = ReduceLROnPlateau(
+        optimizer,
+        mode='min',  # minimize the validation loss
+        factor=0.5,  # multiply the learning rate by 0.5
+        patience=4,  # after 4 epochs without a significant decrease
+        threshold=1e-4,  # threshold for a significant change (0.01% of loss)
+        threshold_mode='rel',  # compare changes relative to the current loss value
+        cooldown=1,  # one epoch cooldown after each reduction
+        min_lr=1e-6  # do not go below this learning rate
+    )
+
+    scaler = GradScaler(init_scale=2 ** 16)
 
     # Loss: combined BCE + Dice
     bce = nn.BCEWithLogitsLoss()
-    def dice_loss(logits, target, smooth=1e-6):
+
+    def dice_loss(logits, target, smooth=1e-3):
         probs = torch.sigmoid(logits)
         p = probs.view(probs.size(0), -1)
         t = target.view(target.size(0), -1)
         inter = (p * t).sum(dim=1)
         union = p.sum(dim=1) + t.sum(dim=1)
-        dice = (2*inter + smooth) / (union + smooth)
+        dice = (2 * inter + smooth) / (union + smooth)
         return (1 - dice).mean()
+
     def criterion(logits, target):
         return bce(logits, target) + dice_loss(logits, target)
 
-    # estimate the time for I/O vs GPU before training for future optimizations
-    batch = next(iter(train_loader))  # warm-up
-    imgs, msks, _ = batch
-    imgs, msks = imgs.to(device, non_blocking=True), msks.to(device, non_blocking=True)
-
-    # Data loading timing
-    t0 = time.time()
-    batch = next(iter(train_loader))
-    load_time = time.time() - t0
-    print(f"Data loading only: {load_time:.3f}s")
-
-    # Compute timing with AMP
-    imgs, msks, _ = batch
-    imgs, msks = imgs.to(device, non_blocking=True), msks.to(device, non_blocking=True)
-    optimizer.zero_grad()
-    torch.cuda.synchronize()
-    t0 = time.time()
-    with autocast():
-        out = model(imgs)
-        loss = criterion(out, msks)
-    scaler.scale(loss).backward()
-    scaler.step(optimizer)
-    scaler.update()
-    torch.cuda.synchronize()
-    comp_time = time.time() - t0
-    print(f"Compute only (AMP): {comp_time:.3f}s")
-
+    # Trainer with scheduler
     trainer = Trainer(
         model=model,
-        num_epochs=30,
+        num_epochs=100,
         optimizer=optimizer,
+        scheduler=scheduler,
         criterion=criterion,
-        device=device
+        device=device,
+        scaler=scaler,
+        use_amp=True,
+        early_stopping_patience=8
     )
     trainer.train(train_loader, val_loader)
     metrics = trainer.get_metrics()
 
     # Save metrics
-    torch.save(metrics, project_root / "metrics.pth")
+    torch.save(metrics, project_root / "metrics_dice_90.pth")
     print("Training complete. Metrics and best model saved.")
+
 
 if __name__ == "__main__":
     main()
