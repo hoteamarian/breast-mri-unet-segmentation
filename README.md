@@ -59,3 +59,35 @@ This was resolved by:
 - Smooth, stable training after modifications
 - Significant speed improvement when switching from `.npy` files in folders to a single HDF5 dataset
 - Balanced positive/negative sampling improved model generalization
+
+## Usage with Docker
+
+### Download dataset and pretrained model
+- Download the MAMMIA dataset from 
+- Place the images and segmentations under your local project structure  
+- Place the pretrained model checkpoint (e.g. `best_model_epoch89_dice0.9031.pth`) inside `data/models/`
+
+### Build the Docker image
+Run this inside the project root:
+
+```bash
+docker build -t unet-infer .
+
+### Run inference with Docker
+- Mount your local folders into the container and call the inference script:
+
+docker run --rm \
+    -v "/path/to/images:/data/images" \
+    -v "/path/to/segmentations:/data/segmentations" \
+    -v "/path/to/models:/data/models" \
+    -v "/path/to/results:/results" \
+    unet-infer \
+    --phases_folder /data/images/<CASE_ID> \
+    --mask_path /data/segmentations/expert/<CASE_ID>.nii.gz \
+    --checkpoint_path /data/models/best_model_epoch89_dice0.9031.pth \
+    --out_dir /results \
+    --device auto
+
+### Output
+- The predicted masks will be saved under your mounted results/ folder.
+- You can change --device auto to --device cpu if you don’t have CUDA available.
