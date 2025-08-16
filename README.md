@@ -59,6 +59,9 @@ This was resolved by:
 - Smooth, stable training after modifications
 - Significant speed improvement when switching from `.npy` files in folders to a single HDF5 dataset
 - Balanced positive/negative sampling improved model generalization
+- Some experiment outputs are stored in the `results/` folder:
+  - `.txt` with evaluation metrics
+  - Overlay `.png` images showing predictions vs ground truth
 
 ## Usage with Docker
 
