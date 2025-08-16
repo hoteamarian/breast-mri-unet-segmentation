@@ -1,0 +1,7 @@
+Tumor pixels in GT mask: 108
+Tumor pixels in Pred mask: 122
+True Positives (TP): 96
+False Positives (FP): 26
+False Negatives (FN): 12
+Dice score: 0.8348
+IoU score: 0.7164
