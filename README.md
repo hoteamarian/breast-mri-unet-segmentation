@@ -63,7 +63,7 @@ This was resolved by:
 ## Usage with Docker
 
 ### Download dataset and pretrained model
-- Download the MAMMIA dataset from 
+- Download the MAMMIA dataset from https://github.com/LidiaGarrucho/MAMA-MIA
 - Place the images and segmentations under your local project structure  
 - Place the pretrained model checkpoint (e.g. `best_model_epoch89_dice0.9031.pth`) inside `data/models/`
 
